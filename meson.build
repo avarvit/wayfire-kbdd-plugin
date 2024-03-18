@@ -17,6 +17,10 @@ wayfire = dependency('wayfire')
 wlroots = dependency('wlroots')
 wfconfig = dependency('wf-config')
 xkbcommon = dependency('xkbcommon')
+glibmm = dependency('glibmm-2.4')
+giomm = dependency('giomm-2.4')
+
+
 
 add_project_arguments(['-DWLR_USE_UNSTABLE'], language: ['cpp', 'c'])
 add_project_arguments(['-DWAYFIRE_PLUGIN'], language: ['cpp', 'c'])
