@@ -2,6 +2,7 @@
 #include <wayfire/plugin.hpp>
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/nonstd/wlroots-full.hpp>
+#include <wayfire/util/log.hpp>
 #include "kbdd_dbus.hpp"
 
 
@@ -80,7 +81,7 @@ class kbdd_plugin : public wf::plugin_interface_t
     const int default_layout_id = 0;
     const char *view_layout_id_key = "keyboard-layout-id";
     std::string notify_command = "wfpanelctl kbdlayout ";
-    wf::wl_timer timer;
+    wf::wl_timer<false> timer;
     std::shared_ptr<KbddDBus> kbdd_dbus;
 
     // layout names and state
@@ -230,18 +231,23 @@ class kbdd_plugin : public wf::plugin_interface_t
     };
 
 
-    wf::signal_connection_t reload_config = [=] (wf::signal_data_t *data) {
+    // wf::signal_connection_t reload_config = [=] (wf::signal_data_t *data) {
 
-        (void) data; // suppress unused warning
+        // (void) data; // suppress unused warning
+    wf::signal::connection_t<wf::reload_config_signal> reload_config = [=] (wf::reload_config_signal *signal) {
+        (void) signal; // suppress unsed warning
         reload_options();
 
     };
 
 
-    wf::signal_connection_t keyboard_focus_changed = [=] (wf::signal_data_t *data) {
+    // wf::signal_connection_t keyboard_focus_changed = [=] (wf::signal_data_t *data) {
 
-        wf::keyboard_focus_changed_signal *signal = static_cast<wf::keyboard_focus_changed_signal*>(data);
-        wayfire_view view = signal->view;
+        // wf::keyboard_focus_changed_signal *signal = static_cast<wf::keyboard_focus_changed_signal*>(data);
+    wf::signal::connection_t<wf::keyboard_focus_changed_signal> keyboard_focus_changed = [=] (wf::keyboard_focus_changed_signal *signal) {
+        // wayfire_view view = signal->view;
+        wf::scene::node_ptr focused_node = signal->new_focus;
+        wayfire_view view = wf::node_to_view(focused_node);
 
         if (!view) {
             return;
@@ -249,6 +255,7 @@ class kbdd_plugin : public wf::plugin_interface_t
 
         int view_id = view->get_id();
         std::string app_id = view->get_app_id();
+        LOGD("Focus changed to app id: ", app_id);
         if (view_id == prev_view_id) {
             return;
         }
@@ -288,9 +295,11 @@ class kbdd_plugin : public wf::plugin_interface_t
         restore_view_layout(view, keyboard);
     };
 
-    wf::signal_connection_t keyboard_key_post = [=] (wf::signal_data_t *data) {
+    // wf::signal_connection_t keyboard_key_post = [=] (wf::signal_data_t *data) {
+    wf::signal::connection_t<wf::post_input_event_signal<wlr_keyboard_key_event>> keyboard_key_post = [=] (wf::post_input_event_signal<wlr_keyboard_key_event> *signal) {
 
-        (void) data; // suppress unused warning
+        // (void) data; // suppress unused warning
+        (void) signal; // suppress unused warning
         // wlr_keyboard_key_event *ev = (wlr_keyboard_key_event*)(data);
 
         int layout_id = current_keyboard_layout_id();
@@ -325,10 +334,14 @@ public:
     void init() override
     {
         load_xkb_options();
+        run_notify_panel_all_layouts();
 
-        wf::get_core().connect_signal("reload-config", &reload_config);
-        wf::get_core().connect_signal("keyboard-focus-changed", &keyboard_focus_changed);
-        wf::get_core().connect_signal("keyboard_key_post", &keyboard_key_post);
+        // wf::get_core().connect_signal("reload-config", &reload_config);
+        wf::get_core().connect(&reload_config);
+        // wf::get_core().connect_signal("keyboard-focus-changed", &keyboard_focus_changed);
+        wf::get_core().connect(&keyboard_focus_changed);
+        // wf::get_core().connect_signal("keyboard_key_post", &keyboard_key_post);
+        wf::get_core().connect(&keyboard_key_post);
 
         kbdd_dbus = KbddDBus::Launch(
             // enable(guint32)
@@ -348,16 +361,22 @@ public:
             // switch(ustring)
             [=] (std::string layout) {
                 int layout_id = short_layouts.index(layout);
+                LOGD("Received switch command for layout ", layout, " with ID ", layout_id);
                 if (!dbus_switch_enabled) {
+                    LOGD("dbus_switch_enabled is false, not switcing");
                     return false;
                 }
                 if (layout_id == -1) {
+                    LOGD("layout_id is -1 (not found), not switching");
                     return false;
                 }
                 if (shell_view_id == -1) {
+                    // FIXME: maybe add an option for this behavior?
+                    LOGD("shell_view_id is -1 (no layout with id $unfocus seen so far), not switching");
                     return false;
                 }
                 if (last_non_shell_view_id == -1) {
+                    LOGD("last_non_shell_view_id is -1 (undefined), not switching");
                     return false;
                 }
 
@@ -365,6 +384,7 @@ public:
                 // the focus returns to the previous view) before we get to process the DBus
                 // event, therefore we are already in the view that should change its layout
                 if (prev_view_id == last_non_shell_view_id) {
+                    LOGD("switch receieved for the last non-shell view, emiting wlr_keyboard_notify");
                     wlr_seat *seat = wf::get_core().get_current_seat();
                     wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
                     if (!keyboard)
@@ -377,6 +397,7 @@ public:
                     run_notify_panel_command(layout_id);
                 }
                 else {
+                    LOGD("switch received for another view, storing their layout_id for later");
                     for (auto v : wf::get_core().get_all_views()) {
                         if (v->get_id() == (uint) last_non_shell_view_id) {
                             v->store_data(std::make_unique<view_layout_id>(layout_id),
@@ -384,6 +405,7 @@ public:
                             break;
                         }
                     }
+                    LOGD("the view for which the switch command was received was not found");
                 }
                 return true;
             }
@@ -392,8 +414,10 @@ public:
 
     void fini() override {
         timer.disconnect();
-        wf::get_core().disconnect_signal(&keyboard_focus_changed);
-        wf::get_core().disconnect_signal(&keyboard_key_post);
+        // wf::get_core().disconnect_signal(&keyboard_focus_changed);
+        wf::get_core().disconnect(&keyboard_focus_changed);
+        // wf::get_core().disconnect_signal(&keyboard_key_post);
+        wf::get_core().disconnect(&keyboard_key_post);
         run_notify_panel_no_layouts();
         run_notify_panel_no_kbdd();
     }

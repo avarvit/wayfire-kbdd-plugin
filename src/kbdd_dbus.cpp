@@ -1,6 +1,5 @@
 #include "kbdd_dbus.hpp"
-
-#include <iostream>
+#include <wayfire/util/log.hpp>
 
 static const auto introspection_data = Gio::DBus::NodeInfo::create_for_xml(
     R"(
@@ -73,6 +72,7 @@ KbddDBus::KbddDBus() {
     // I am done with everything else, I might add the code to write code for
     // creating, destructing and managing a purpose-specific thread in here
 
+    
     timer.set_timeout(500, [=] () {
         if (main_loop->get_context()->iteration(FALSE)) {
         }
@@ -108,16 +108,6 @@ void KbddDBus::set_switch_callback(std::function<bool(std::string)> switch_cb) {
 }
 
 KbddDBus::~KbddDBus() {
-#if 0
-    for (const auto& [_, host_id] : sn_hosts_id) {
-        Gio::DBus::unwatch_name(host_id);
-    }
-
-    for (const auto& [_, item_id] : sn_items_id) {
-        Gio::DBus::unwatch_name(item_id);
-    }
-
-#endif
     timer.disconnect();
     kbdd_dbus_connection->unregister_object(dbus_object_id);
     Gio::DBus::unown_name(dbus_name_id);
@@ -127,64 +117,24 @@ void KbddDBus::on_bus_acquired(
     const Glib::RefPtr<Gio::DBus::Connection> & connection,
     const Glib::ustring & name)
 {
-    dbus_object_id = connection->register_object(
-        SNW_PATH,
-        introspection_data->lookup_interface(),
-        interface_table);
-    kbdd_dbus_connection = connection;
+    LOGD("DBus acquired");
+    try {
+        dbus_object_id = connection->register_object(
+            SNW_PATH,
+            introspection_data->lookup_interface(),
+            interface_table);
+        LOGD("Interface table registered");
+        kbdd_dbus_connection = connection;
+    }
+    catch (const Glib::Error &ex) {
+        LOGE("Interface table registration failed");
+    }
 
 #ifndef USED
     (void) name;
 #endif
 }
 
-#if 0
-void KbddDBus::register_status_notifier_item(const Glib::RefPtr<Gio::DBus::Connection> & connection,
-    const Glib::ustring & sender, const Glib::ustring & path)
-{
-    const auto full_obj_path = sender + path;
-    emit_signal("StatusNotifierItemRegistered", full_obj_path);
-    sn_items_id.emplace(full_obj_path, Gio::DBus::watch_name(
-        Gio::DBus::BUS_TYPE_SESSION, sender, {},
-        [this, full_obj_path] (const Glib::RefPtr<Gio::DBus::Connection> & connection,
-                               const Glib::ustring & name)
-    {
-        Gio::DBus::unwatch_name(sn_items_id.at(full_obj_path));
-        sn_items_id.erase(full_obj_path);
-        emit_signal("StatusNotifierItemUnregistered", full_obj_path);
-    }));
-}
-#endif
-
-#if 0
-void KbddDBus::register_status_notifier_host(const Glib::RefPtr<Gio::DBus::Connection> & connection,
-    const Glib::ustring & service)
-{
-    sn_hosts_id.emplace(
-        service, Gio::DBus::watch_name(
-            connection, service,
-            [this, is_host_registred_changed = sn_hosts_id.empty()] (
-                const Glib::RefPtr<Gio::DBus::Connection> &, const Glib::ustring &, const Glib::ustring &)
-    {
-        emit_signal("StatusNotifierHostRegistered");
-        if (is_host_registred_changed)
-        {
-            kbdd_dbus_connection->emit_signal(
-                SNW_PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged", {},
-                Glib::Variant<std::tuple<Glib::ustring, std::map<Glib::ustring, Glib::VariantBase>,
-                    std::vector<Glib::ustring>>>::
-                create({SNW_IFACE,
-                    {{"IsStatusNotifierHostRegistered", Glib::Variant<bool>::create(true)}},
-                    {}}));
-        }
-    },
-            [this] (const Glib::RefPtr<Gio::DBus::Connection> & connection, const Glib::ustring & name)
-    {
-        Gio::DBus::unwatch_name(sn_hosts_id[name]);
-        sn_hosts_id.erase(name);
-    }));
-}
-#endif
 
 void KbddDBus::handle_method_call(
     const Glib::RefPtr<Gio::DBus::Connection> & connection,
@@ -197,48 +147,32 @@ void KbddDBus::handle_method_call(
 {
     if (method_name == "enable") {
         if (!parameters.is_of_type(Glib::VariantType("(u)"))) {
-            std::cerr << "KbddDBus: invalid argument type: expected (u), got " <<
-                parameters.get_type_string() <<
-                std::endl;
+            LOGE("Invalid argument type, expected (u), got ", parameters.get_type_string());
             return;
         }
         Glib::Variant<guint32> enable_first_param_v;
         parameters.get_child(enable_first_param_v, 0);
         guint32 enable = enable_first_param_v.get();
+        LOGD("Received ebable=", enable);
         enable_callback((enable != 0));
     }
     else if (method_name == "switch") {
         if (!parameters.is_of_type(Glib::VariantType("(s)"))) {
-            std::cerr << "KbddDBus: invalid argument type: expected (s), got " <<
-                parameters.get_type_string() <<
-                std::endl;
+            LOGE("Invalid argument type, expected (s), got ", parameters.get_type_string());
             return;
         }
         Glib::Variant<Glib::ustring> switch_first_param_v;
         parameters.get_child(switch_first_param_v, 0);
         Glib::ustring layout = switch_first_param_v.get();
+        LOGD("Received switch=", layout);
         bool was_ok = switch_callback(layout);
         // avoid never-used warning
         (void) was_ok;
     }
     else {
-        std::cerr << "StatusNotifierWatcher: unknown method " << method_name << std::endl;
+        LOGE("unknown method ", method_name);
         return;
     }
-#if 0
-
-    if (method_name == "RegisterStatusNotifierItem") {
-        register_status_notifier_item(connection, service[0] == '/' ? sender : service,
-            service[0] == '/' ? service : "/StatusNotifierItem");
-    } else if (method_name == "RegisterStatusNotifierHost") {
-        register_status_notifier_host(connection, service);
-    } else {
-        std::cerr << "StatusNotifierWatcher: unknown method " << method_name << std::endl;
-        return;
-    }
-
-    invocation->return_value(Glib::VariantContainerBase());
-#endif
 
 #ifndef USED
     (void) connection;
@@ -259,17 +193,6 @@ void KbddDBus::handle_get_property(
     const Glib::ustring & interface_name,
     const Glib::ustring & property_name)
 {
-#if 0
-    if (property_name == "RegisteredStatusNotifierItems") {
-        property = get_registred_items();
-    } else if (property_name == "IsStatusNotifierHostRegistered") {
-        property = Glib::Variant<bool>::create(!sn_hosts_id.empty());
-    } else if (property_name == "ProtocolVersion") {
-        property = Glib::Variant<int>::create(0);
-    } else {
-        std::cerr << "StatusNotifierWatcher: Unknown property " << property_name << std::endl;
-    }
-#endif
 #ifndef USED
     (void) property;
     (void) connection;
@@ -301,18 +224,3 @@ bool KbddDBus::handle_set_property(
 
     return FALSE;
 }
-
-
-#if 0
-Glib::Variant<std::vector<Glib::ustring>> Watcher::get_registred_items() const
-{
-    std::vector<Glib::ustring> sn_items_names;
-    sn_items_names.reserve(sn_items_id.size());
-    for (const auto & [service, id] : sn_items_id)
-    {
-        sn_items_names.push_back(service);
-    }
-
-    return Glib::Variant<std::vector<Glib::ustring>>::create(sn_items_names);
-}
-#endif

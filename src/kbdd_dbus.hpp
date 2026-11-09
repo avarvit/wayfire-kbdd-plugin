@@ -1,5 +1,5 @@
-#ifndef TRAY_WATCHER_HPP
-#define TRAY_WATCHER_HPP
+#ifndef KBDD_DBUS_HPP
+#define KBDD_DBUS_HPP
 
 #include <memory>
 #include <giomm.h>
@@ -33,7 +33,7 @@ class KbddDBus
     std::function<void(bool)> enable_callback;
     std::function<bool(std::string)> switch_callback;
 
-    wf::wl_timer timer;
+    wf::wl_timer<true> timer;
     Glib::RefPtr<Glib::MainLoop> main_loop;
 
     guint dbus_name_id;
@@ -75,21 +75,6 @@ class KbddDBus
         const Glib::ustring &property_name,
         const Glib::VariantBase &value);
 
-#if 0
-    template<typename... Args>
-    void emit_signal(const Glib::ustring & name, Args &&... args)
-    {
-        watcher_connection->emit_signal(
-            SNW_PATH, SNW_IFACE, name, {},
-            Glib::Variant<std::tuple<std::remove_cv_t<std::remove_reference_t<Args>> ...>>::create(
-                std::tuple(std::forward<Args>(args)...)));
-    }
-
-    void emit_signal(const Glib::ustring& name)
-    {
-        watcher_connection->emit_signal(SNW_PATH, SNW_IFACE, name);
-    }
-#endif
 }; // namespace KbddDBus
 
 #endif
