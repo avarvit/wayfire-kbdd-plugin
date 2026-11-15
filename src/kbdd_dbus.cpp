@@ -155,6 +155,15 @@ void KbddDBus::handle_method_call(
         guint32 enable = enable_first_param_v.get();
         LOGD("Received ebable=", enable);
         enable_callback((enable != 0));
+#if 0
+        // this is how we should send an empty response (should we have to)
+        Glib::signal_timeout().connect_once([invocation]() {
+            // Perform your void async work here...
+
+            // Return an empty response (no out arguments)
+            invocation->return_value(Glib::VariantContainerBase());
+        }, 1000);
+#endif
     }
     else if (method_name == "switch") {
         if (!parameters.is_of_type(Glib::VariantType("(s)"))) {
